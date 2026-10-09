@@ -1,0 +1,21 @@
+{
+  "checkedDate": "2026-10-09",
+  "timezone": "Asia/Shanghai",
+  "method": "公开页面读取与合成 DOM 回归分别记录。公开摘要不包含个人截图、搜索参数、聊天记录或逐人确认信息。",
+  "platforms": {
+    "boss": {
+      "url": "https://www.zhipin.com/",
+      "result": "公开页面可能要求登录、验证码或访问授权；这些环节由用户自行处理。",
+      "adapterStatus": "experimental",
+      "realCapturePreviewImportSwipeMatchResume": "尚未完成可复现的真实页面采集、预览、导入、滑卡、匹配与简历全链路验收。",
+      "syntheticCoverage": [
+        "详情和列表字段提取",
+        "公司区域及拆分面板识别",
+        "来源变化时避免混合岗位",
+        "预览和导入数据校验"
+      ],
+      "validationNote": "合成回归用于验证适配器行为，不能代替登录后真实网站验收。"
+    }
+  },
+  "syntheticTestsAreNotRealWebsiteValidation": true
+}

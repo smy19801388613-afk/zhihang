@@ -1,0 +1,37 @@
+import { useEffect, useState } from 'react';
+import { ArrowRight, ArrowUpRight, Check, FileText, Pencil, RefreshCw, X } from 'lucide-react';
+import type { Action, WorkspaceState } from '../shared/types';
+import type { BrowserCaptureRecord, CaptureEditableFields } from '../shared/browser-capture';
+
+type Props = { state: WorkspaceState; busy: string; act: (action: Action, message?: string) => Promise<WorkspaceState | null>; onRefresh: () => Promise<void>; onDiscover: () => void; initialEditId?: string; onDirty: (dirty: boolean) => void };
+const when = (value: string) => new Date(value).toLocaleString('zh-CN');
+const labels: Array<{ key: keyof Omit<CaptureEditableFields, 'jdComplete' | 'jd'>; label: string; max: number }> = [{ key: 'company', label: '公司', max: 200 }, { key: 'title', label: '岗位名称', max: 200 }, { key: 'city', label: '城市', max: 120 }, { key: 'salary', label: '薪资原文', max: 200 }, { key: 'education', label: '学历要求', max: 200 }, { key: 'experience', label: '经验要求', max: 200 }, { key: 'industry', label: '行业（有依据时填写）', max: 200 }];
+
+function CaptureEditor({ record, busy, act, onClose, onDirty }: { record: BrowserCaptureRecord; busy: string; act: Props['act']; onClose: () => void; onDirty: Props['onDirty'] }) {
+  const [edits, setEdits] = useState<Partial<CaptureEditableFields>>({});
+  const dirty = Object.keys(edits).length > 0;
+  useEffect(() => { onDirty(dirty); return () => onDirty(false); }, [dirty, onDirty]);
+  const field = <K extends keyof CaptureEditableFields>(key: K) => edits[key] ?? record.fields[key];
+  const update = <K extends keyof CaptureEditableFields>(key: K, value: CaptureEditableFields[K]) => setEdits(previous => ({ ...previous, [key]: value }));
+  async function save() {
+    const verifiedEdits = 'jd' in edits ? { ...edits, jdComplete: field('jdComplete') } : edits;
+    if (await act({ type: 'save_browser_capture', captureId: record.id, edits: verifiedEdits }, '岗位修正已保存。再次采集时会保留你修改的字段。')) { setEdits({}); onDirty(false); onClose(); }
+  }
+  return <div className="capture-editor" data-testid="capture-editor"><div className="capture-section-heading compact"><div><h3>修正岗位信息</h3><p>保存后，再次采集会保留你修正的字段。</p></div><button className="button quiet" disabled={!!busy} onClick={() => { onDirty(false); onClose(); }}><X size={14} />{dirty ? '放弃本次修改' : '关闭编辑'}</button></div><div className="form-grid">{labels.map(({ key, label, max }) => <label className="field" key={key}><span>{label}</span><input aria-label={`修正${label}`} value={field(key) || ''} maxLength={max} disabled={!!busy} onChange={event => update(key, event.target.value)} /></label>)}</div><label className="field"><span>岗位描述 / JD</span><textarea aria-label="修正岗位描述" value={field('jd')} maxLength={16000} rows={8} disabled={!!busy} onChange={event => update('jd', event.target.value)} /></label><label className="capture-completeness"><input type="checkbox" checked={field('jdComplete')} disabled={!!busy} onChange={event => update('jdComplete', event.target.checked)} /><span>我已核对，这是完整岗位详情，包含工作内容及任职要求。</span></label><p className="capture-muted">仅列表摘要请保持未勾选。也可打开原始页面，进入详情后用扩展再次导入补全。</p><div className="capture-editor-actions"><button className="button secondary" disabled={!!busy || !dirty} onClick={() => void save()}><Check size={14} />保存岗位修正</button></div></div>;
+}
+
+export default function CapturedJobsPanel({ state, busy, act, onRefresh, onDiscover, initialEditId, onDirty }: Props) {
+  const [editId, setEditId] = useState(initialEditId || '');
+  const [query, setQuery] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [localError, setLocalError] = useState('');
+  const records = Object.values(state.browserCaptures || {}).sort((a, b) => b.lastCapturedAt.localeCompare(a.lastCapturedAt));
+  const shown = records.filter(record => `${record.fields.company} ${record.fields.title} ${record.fields.city}`.toLowerCase().includes(query.toLowerCase()));
+  useEffect(() => { if (initialEditId) setEditId(initialEditId); }, [initialEditId]);
+  const isHttps = (value: string) => { try { return new URL(value).protocol === 'https:'; } catch { return false; } };
+  async function refresh() { setRefreshing(true); setLocalError(''); try { await onRefresh(); } catch (reason) { setLocalError(reason instanceof Error ? reason.message : '刷新失败。'); } finally { setRefreshing(false); } }
+  return <section className="card captured-jobs" data-testid="captured-jobs" aria-labelledby="captured-jobs-title"><div className="capture-section-heading"><span className="capture-heading-icon"><FileText size={23} /></span><div><h2 id="captured-jobs-title">我导入的岗位 <small>{records.length}</small></h2><p>已导入的岗位会持续保留，可回看原文或修正信息。</p></div><button className="button quiet" disabled={!!busy || refreshing} onClick={() => void refresh()}><RefreshCw size={14} className={refreshing ? 'spin' : ''} />刷新已导入岗位</button></div>
+    {localError && <p className="inline-error" role="alert">{localError}</p>}
+    {records.length ? <><div className="capture-registry-toolbar"><label className="field"><span className="sr-only">搜索已导入岗位</span><input aria-label="搜索已导入岗位" value={query} maxLength={200} onChange={event => setQuery(event.target.value)} placeholder="搜索公司、岗位或城市" /></label><button className="button secondary" disabled={!!busy} onClick={onDiscover}>进入岗位滑卡<ArrowRight size={14} /></button></div><p className="capture-muted">浏览器采集 · 是否仍在招，请核对原始页面。</p><div className="capture-records">{shown.map(record => <article className="capture-record" key={record.id} data-testid="captured-job" data-capture-id={record.id}><div className="capture-record-top"><div><span className="capture-platform">{record.platform === 'boss' ? 'BOSS直聘' : '58同城'} · 浏览器采集</span><h3>{record.fields.title || '岗位名称待补充'}</h3><p>{record.fields.company || '公司待补充'} · {record.fields.city || '城市未提供'}</p></div><span className={`tag ${record.fields.jdComplete ? 'neutral' : 'amber'}`}>{record.fields.jdComplete ? '已有岗位详情' : '详情待补充'}</span></div><div className="capture-record-facts"><span>{record.fields.salary || '薪资未提供'}</span><span>{record.fields.education || '学历未提供'}</span><span>{record.fields.experience || '经验未提供'}</span><span>{record.decision === 'like' || record.selected ? '♥ 已喜欢' : record.decision === 'dislike' ? '已略过' : '待滑卡选择'}</span></div><p className="capture-muted">最近采集 {when(record.lastCapturedAt)}{record.editedFields.length ? ` · ${record.editedFields.length} 个字段已修正` : ''}</p><details className="capture-raw"><summary>查看采集原文与时间</summary>{record.rawHistory.map((snapshot, index) => <div key={`${snapshot.capturedAt}:${index}`}><strong>{when(snapshot.capturedAt)} · {snapshot.pageKind === 'detail' ? '详情页' : snapshot.pageKind === 'list' ? '列表已展示内容' : '手动粘贴'} · {snapshot.fields.jdComplete ? '完整详情' : '摘要 / 详情待补充'}</strong><pre>{snapshot.fields.jd || '该次页面没有提供 JD。'}</pre></div>)}</details><div className="capture-record-actions">{isHttps(record.sourceUrl) && <a className="button quiet" href={record.sourceUrl} target="_blank" rel="noreferrer">打开原始岗位<ArrowUpRight size={13} /></a>}<button className="button quiet" disabled={!!busy || (!!editId && editId !== record.id)} onClick={() => setEditId(record.id)}><Pencil size={13} />{record.fields.jdComplete ? '修正信息' : '补充岗位详情'}</button></div>{editId === record.id && <CaptureEditor key={record.id} record={record} busy={busy} act={act} onClose={() => setEditId('')} onDirty={onDirty} />}</article>)}</div>{!shown.length && <p className="capture-empty">没有符合搜索条件的已导入岗位。</p>}</> : <div className="capture-empty"><FileText size={26} /><h3>还没有导入岗位</h3><p>在浏览器扩展中确认导入，返回职航即可查看。</p></div>}
+  </section>;
+}

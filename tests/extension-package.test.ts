@@ -1,0 +1,90 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
+import { mkdir, mkdtemp, readFile, writeFile, symlink } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import JSZip from 'jszip';
+import { buildExtensionPackage, extensionPackageInfo, EXTENSION_PACKAGE_FILES } from '../server/extension-package.ts';
+
+const root = process.cwd();
+const release = resolve(root, 'extensions/zhihang-capture');
+async function folder() { await mkdir(resolve('test-results'), { recursive: true }); return await mkdtemp(resolve('test-results/extension-package-')); }
+async function fixture(target: string, omitAdapters = false) {
+  for (const name of EXTENSION_PACKAGE_FILES) {
+    if (omitAdapters && name.startsWith('adapters/')) continue;
+    await mkdir(dirname(resolve(target, name)), { recursive: true });
+    await writeFile(resolve(target, name), await readFile(resolve(release, name)));
+  }
+}
+
+test('portable extension ZIP has only release files, an unchanged manifest, and no author path or local data', async () => {
+  const dir = await folder(); await fixture(dir);
+  for (const name of ['credentials.json', 'live-platform-status.json', 'profile.txt', '.env']) await writeFile(resolve(dir, name), 'PRIVATE_EXTENSION_SECRET');
+  const packaged = await buildExtensionPackage(dir);
+  const zip = await JSZip.loadAsync(packaged.buffer);
+  assert.deepEqual(Object.keys(zip.files).sort(), EXTENSION_PACKAGE_FILES.map(name => `zhihang-capture/${name}`).sort());
+  assert.equal(zip.file('zhihang-capture/adapters/58.js'), null);
+  assert.match(packaged.filename, /^zhihang-capture-v\d+(?:\.\d+)+\.zip$/u);
+  assert.equal(await zip.file('zhihang-capture/manifest.json')!.async('string'), await readFile(resolve(release, 'manifest.json'), 'utf8'));
+  const metadata = await extensionPackageInfo(dir);
+  assert.equal(metadata.extensionVersion, packaged.version);
+  assert.equal(metadata.extensionDownloadUrl, '/api/browser-extension/download');
+  assert.equal(metadata.serviceUrl, 'http://127.0.0.1:4317');
+  for (const file of Object.values(zip.files)) assert.doesNotMatch(await file.async('string'), /PRIVATE_EXTENSION_SECRET|C:\\Users\\|C:\/Users\/|Desktop\\比赛/u);
+  const readme = await zip.file('zhihang-capture/README.md')!.async('string');
+  assert.match(readme, /下载扩展 ZIP/u); assert.match(readme, /自己电脑/u);
+});
+
+test('missing files, oversized inputs and widened permissions fail closed without leaking filesystem paths', async () => {
+  const dir = await folder();
+  await assert.rejects(buildExtensionPackage(dir), error => error instanceof Error && error.message === '扩展安装包暂不可用，请检查安装文件是否完整后重试。');
+  await fixture(dir);
+  await writeFile(resolve(dir, 'preview.js'), 'x'.repeat(512 * 1024 + 1));
+  await assert.rejects(buildExtensionPackage(dir), /安装包暂不可用/u);
+  const manifest = JSON.parse(await readFile(resolve(dir, 'manifest.json'), 'utf8'));
+  manifest.host_permissions = ['<all_urls>'];
+  await writeFile(resolve(dir, 'manifest.json'), JSON.stringify(manifest));
+  await assert.rejects(extensionPackageInfo(dir), /安装包暂不可用/u);
+});
+
+test('a release subdirectory cannot link to files outside the extension directory', async () => {
+  const dir = await folder(); const outside = await folder();
+  await fixture(dir, true); await fixture(outside);
+  await symlink(resolve(outside, 'adapters'), resolve(dir, 'adapters'), process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(buildExtensionPackage(dir), /安装包暂不可用/u);
+});
+
+test('real HTTP download has attachment headers and exact ZIP contents; cross-origin requests remain blocked', { timeout: 30000 }, async () => {
+  const dir = await folder();
+  const port = await new Promise<number>(done => { const server = createServer(); server.listen(0, '127.0.0.1', () => { const available = (server.address() as { port: number }).port; server.close(() => done(available)); }); });
+  const base = `http://127.0.0.1:${port}`; let logs = '';
+  const child = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { ...process.env, PORT: String(port), DATA_DIR: dir, MODEL_API_KEY: '', MODEL_BASE_URL: '', MODEL_NAME: '', JOB_DISCOVERY_ENABLED: 'false', JOBSPY_ENABLED: 'false' } });
+  child.stdout?.on('data', data => { logs += String(data); }); child.stderr?.on('data', data => { logs += String(data); });
+  try {
+    let ready = false;
+    for (let n = 0; n < 80; n++) { if (child.exitCode !== null) throw new Error(logs); try { if ((await fetch(base + '/api/status')).ok) { ready = true; break; } } catch {} await new Promise(done => setTimeout(done, 100)); }
+    assert.ok(ready);
+    const stateBefore = await (await fetch(base + '/api/state')).json();
+    const response = await fetch(base + '/api/browser-extension/download', { headers: { Origin: base, 'Sec-Fetch-Site': 'same-origin' } });
+    assert.equal(response.status, 200); assert.match(response.headers.get('content-type') || '', /^application\/zip/u);
+    assert.match(response.headers.get('content-disposition') || '', /^attachment; filename="zhihang-capture-v[\d.]+\.zip"$/u);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    const bytes = Buffer.from(await response.arrayBuffer()); const zip = await JSZip.loadAsync(bytes);
+    assert.deepEqual(Object.keys(zip.files).sort(), EXTENSION_PACKAGE_FILES.map(name => `zhihang-capture/${name}`).sort());
+    const metadata = await (await fetch(base + '/api/browser-connections', { headers: { Origin: base } })).json();
+    assert.deepEqual(metadata.connections, []); assert.equal(metadata.serviceUrl, 'http://127.0.0.1:4317');
+    assert.equal(metadata.extensionVersion, JSON.parse(await zip.file('zhihang-capture/manifest.json')!.async('string')).version);
+    const deniedHeaders: Record<string, string>[] = [{ Origin: 'https://outside.invalid' }, { Origin: 'chrome-extension://' + 'a'.repeat(32) }, { Origin: 'null' }, { 'Sec-Fetch-Site': 'cross-site' }];
+    for (const headers of deniedHeaders) {
+      const rejected = await fetch(base + '/api/browser-extension/download', { headers });
+      assert.equal(rejected.status, 403); assert.equal(rejected.headers.get('access-control-allow-origin'), null);
+    }
+    assert.deepEqual(await (await fetch(base + '/api/state')).json(), stateBefore);
+    assert.deepEqual((await (await fetch(base + '/api/browser-connections')).json()).connections, []);
+    await writeFile(resolve(dir, `zhihang-capture-v${metadata.extensionVersion}.zip`), bytes);
+    await writeFile(resolve(dir, 'report.json'), JSON.stringify({ result: 'PASS', source: 'real isolated HTTP server', fileCount: Object.keys(zip.files).length, version: metadata.extensionVersion, downloadUrl: metadata.extensionDownloadUrl, pairingServiceUrl: metadata.serviceUrl, crossOriginRejected: true, workspaceUnchanged: true, pairingConnectionsCreated: 0 }, null, 2));
+  } finally {
+    if (child.exitCode === null) { const exited = new Promise<void>(done => child.once('exit', () => done())); child.send!('shutdown'); await exited; }
+  }
+});

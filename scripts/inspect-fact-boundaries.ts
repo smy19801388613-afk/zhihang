@@ -1,0 +1,13 @@
+import {readFileSync} from 'node:fs';
+import {basename} from 'node:path';
+import {parseResumeFile,inferProfileFromText} from '../server/resume-import.ts';
+import {factSourceSegments} from '../server/model.ts';
+const path=process.argv.find(value=>value.startsWith('--file='))?.slice(7);
+if(!path)throw new Error('Authorized local file path required.');
+const parsed=await parseResumeFile({name:basename(path),mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',buffer:readFileSync(path)});
+const profile=inferProfileFromText(parsed.text).fields;
+const source=profile.experienceText||parsed.text;
+const outline=source.split(/\n\s*\n/).map((text,index)=>({index,characters:text.length,startsWithDate:/^20\d{2}/u.test(text),hasCourse:/课程|课堂/.test(text),hasExternalRole:/外联部|小组长/.test(text)}));
+const state=await (await fetch('http://127.0.0.1:4317/api/state')).json();
+const currentFacts=state.profile.facts.map((fact:any,index:number)=>({index,characters:fact.text.length,confirmed:fact.confirmed,courseOccurrences:(fact.text.match(/课程|课堂/g)||[]).length,hasExternalRole:/外联部|小组长/.test(fact.text),lineCount:fact.text.split('\n').length}));
+console.log(JSON.stringify({characters:source.length,outline,currentFacts,segments:factSourceSegments(source).map(segment=>({id:segment.id,characters:segment.text.length,hasCourse:/课程|课堂/.test(segment.text),hasExternalRole:/外联部|小组长/.test(segment.text)}))},null,2));

@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>岗位导入 · 职航</title><link rel="stylesheet" href="preview.css"></head>
+<body><main>
+  <header><div><span class="eyebrow">职航 · 浏览器扩展 <span id="extension-version"></span></span><h1>把看中的岗位，带回职航。</h1><p>核对资料后导入，继续滑卡、分析匹配与准备简历。</p></div><a class="secondary" href="http://127.0.0.1:4317" target="_blank" rel="noreferrer">打开职航 ↗</a></header>
+  <section class="connection"><div><h2>本机连接</h2><p id="connection-state" role="status">正在检查连接…</p></div><form id="pair-form"><label>一次性配对码<input id="pair-code" autocomplete="off" maxlength="32" placeholder="在职航的扩展连接中生成" required></label><button>配对</button></form><button id="disconnect" class="secondary" hidden>断开连接</button></section>
+  <section class="notice"><strong>仅在你点击扩展时读取岗位区域</strong><p>岗位采集目前适配 BOSS直聘，真实页面验收状态见项目说明。登录、验证码和访问限制请在原站自行处理。列表摘要会标记为“详情待补充”；不会自动翻页、联系招聘者或投递。字节校园网申在独立授权页处理。</p></section>
+  <div id="message" role="status" aria-live="polite"></div>
+  <section id="capture-info"></section>
+  <section id="capture-diagnostics" class="capture-diagnostics" hidden><button id="copy-diagnostics" class="secondary">复制采集诊断</button><p class="help">仅复制扩展版本、公司识别及左右分栏的结构计数，不包含岗位正文、页面链接或账号信息；不会自动发送。</p><p id="diagnostic-status" class="help" role="status"></p><label id="diagnostic-fallback" hidden>请手动复制下方诊断<textarea id="diagnostic-text" readonly spellcheck="false"></textarea></label></section>
+  <section class="toolbar"><h2>岗位预览 <span id="count"></span></h2><div><button id="select-all" class="secondary">全选</button><button id="select-none" class="secondary">取消全选</button><button id="manual" class="secondary">手动粘贴 JD</button></div></section>
+  <div id="jobs"></div>
+  <footer><span id="selection">尚未选择岗位</span><button id="import" disabled>确认导入职航</button></footer>
+  <p class="privacy">扩展只保存配对凭证与本次预览，不接触模型密钥、个人简历、聊天记录或 Cookie。关闭浏览器会清空未导入预览。已导入资料保存在本机职航。</p>
+</main><script src="preview.js" type="module"></script></body></html>

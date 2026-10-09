@@ -1,0 +1,2 @@
+# Public read-only job discovery. Kept separate from the model/browser runtime.
+python-jobspy==1.2.0
